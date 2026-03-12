@@ -531,16 +531,12 @@ body.midnight .wish-item { background:rgba(26,58,107,0.3); }
 #pocket-envelope {
   position:relative;
   width:min(420px, 88vw);
-  /* Envelope height — letter peeks above this */
-  --env-h: clamp(170px, 26vh, 220px);
-  /* Letter height — taller than envelope for portrait feel */
-  --letter-h: clamp(360px, 62vh, 520px);
-  height:calc(var(--env-h) + 20px); /* just the envelope visible at start */
+  /* Envelope height */
+  --env-h: clamp(160px, 24vh, 200px);
+  height:calc(var(--env-h) + 20px);
   margin-bottom:0;
   cursor:pointer;
   user-select:none;
-  /* Reserve vertical space so letter doesn't overflow viewport */
-  /* Will expand when letter opens */
   transition:height 0s;
 }
 
@@ -597,7 +593,8 @@ body.midnight .wish-item { background:rgba(26,58,107,0.3); }
   bottom:calc(var(--env-h) * 0.14);
   left:50%;
   width:calc(100% - 16px);
-  height:var(--letter-h);
+  /* NO fixed height — grows with content */
+  min-height:200px;
   border-radius:12px 12px 6px 6px;
   background:linear-gradient(170deg, #fffdf7 0%, #fff9f0 60%, #fff4e6 100%);
   border:1px solid rgba(245,158,11,0.22);
@@ -605,50 +602,41 @@ body.midnight .wish-item { background:rgba(26,58,107,0.3); }
     0 -6px 24px rgba(0,0,0,0.2),
     0 2px 0 rgba(255,255,255,0.8) inset;
   z-index:2;
-  overflow:hidden;
+  /* overflow visible so height:auto works */
+  overflow:visible;
   pointer-events:none;
-  /* Start: fully tucked */
-  transform:translateX(-50%) translateY(calc(var(--letter-h) * 0.93));
   will-change:transform;
 }
-/* transition only applied when NOT dragging */
+/* transition only when snapping (not during drag) */
 #env-letter.animated {
-  transition:transform 0.72s cubic-bezier(0.22,1,0.36,1),
-             box-shadow 0.72s ease;
+  transition:transform 0.75s cubic-bezier(0.22,1,0.36,1);
 }
 #env-letter.draggable { pointer-events:auto; cursor:grab; }
 #env-letter.draggable:active { cursor:grabbing; }
 
-/* Lined paper texture */
-#env-letter::before {
-  content:'';
-  position:absolute; inset:0; pointer-events:none;
-  background:repeating-linear-gradient(
-    transparent, transparent 27px,
-    rgba(147,197,253,0.14) 28px
-  );
+/* Clip overflow content inside the rounded card */
+#env-letter-inner {
+  position:relative;
+  padding:22px 20px 36px;
+  overflow:hidden;
   border-radius:inherit;
 }
-
-/* Letter inner content — scrollable */
-#env-letter-inner {
-  position:absolute; inset:0;
-  padding:22px 20px 26px;
-  overflow-y:hidden; /* enabled via JS after open */
-  -webkit-overflow-scrolling:touch;
-  /* Block inner scroll from interfering with drag */
-  touch-action:none;
-}
-#env-letter.scroll-enabled #env-letter-inner {
-  overflow-y:auto;
-  touch-action:pan-y;
+/* lined paper texture via inner pseudo */
+#env-letter-inner::before {
+  content:'';
+  position:absolute; inset:0; pointer-events:none;
+  border-radius:inherit;
+  background:repeating-linear-gradient(
+    transparent, transparent 27px,
+    rgba(147,197,253,0.13) 28px
+  );
 }
 
 /* Drag handle hint at top of letter */
 #env-drag-handle {
   position:absolute; top:8px; left:50%; transform:translateX(-50%);
   width:36px; height:4px; border-radius:2px;
-  background:rgba(180,83,9,0.25);
+  background:rgba(180,83,9,0.22);
   pointer-events:none;
   opacity:0; transition:opacity 0.4s;
 }
@@ -1356,7 +1344,7 @@ function toggleMidnight(){
 // ═══════════════════════════════════════
 const now0=new Date();
 let target=new Date('2025-04-09T00:00:00');
-if(now0>=target) target=new Date('2026-03-12T12:12:00');
+if(now0>=target) target=new Date('2026-04-09T00:00:00');
 const pad=n=>String(n).padStart(2,'0');
 function popNum(el){el.classList.remove('pop');void el.offsetWidth;el.classList.add('pop');setTimeout(()=>el.classList.remove('pop'),280);}
 let prevSec=-1;
@@ -1458,131 +1446,101 @@ function startTypewriter(){
 }
 
 // ═══════════════════════════════════════
-// 💌 POCKET ENVELOPE — Drag-to-pull system
-//
-// The letter can be:
-//   1. Auto-risen paragraph-by-paragraph as text types
-//   2. Manually dragged UP by the user at any time
-//   3. Snapped: released past halfway → stays open
-//              released below halfway → snaps back in
-//
-// translateY is stored as raw pixels relative to
-// the "fully tucked" baseline, then applied via JS.
-// CSS class .animated adds transition for snaps only.
-//
-// Limits:
-//   MIN_Y  = -(letterH - envH*0.28)  — max pull out (bottom still in envelope)
-//   MAX_Y  = letterH * 0.93           — fully tucked in
+// 💌 POCKET ENVELOPE
+// Letter height = auto (grows with content).
+// Drag limits recalculated AFTER typing finishes.
 // ═══════════════════════════════════════
-const letterContent = `bocill,\nhave watered 100 roses.\nthats no coincidence — thats u.\nu are the one who is attentive, patient, and never gives up.\n\ntoday, 9 april, i want to say something that I might have never said directly:\n\nthanks for existing. truly.\nnot cz u're perfect(but ik u = perfect) — but precisely because u are u. With all ur exhaustion, all ur cries, and all ur "i can't do this anymore" moments.\n\nu strong without realizing it, velly. and thats one of the most beautiful things ive ever seen.\n\nhappy birthday. i hope this year is much lighter, much happier, and full of things that make u smile for no reason yaa.\n\nu deserve it all. every single bit of it. 💙`;
+const letterContent = `bocill,\nhave watered 100 roses.\nthats no coincidence — thats u.\nu are the one who is attentive, patient, and never gives up.\n\ntoday, 9 april, i want to say something that i might have never said directly:\n\nthanks for existing. truly.\nnot cz u're perfect (but ik u = perfect) — but precisely because u are u. with all ur exhaustion, all ur cries, and all ur "i can't do this anymore" moments.\n\nu strong without realizing it, velly. and that's one of the most beautiful things i've ever seen.\n\ni love how u care so deeply about the people around u, even when ur own cup is empty. that says a lot about who u are.\n\nhappy birthday. i hope this year is much lighter, much happier, and full of things that make u smile for no reason yaa.\n\nu deserve it all. every single bit of it. 💙`;
 
-// ── State ──
 let isLetterOpen    = false;
 let letterAnimating = false;
 let letterTyped     = false;
+let dragActive      = false;
+let dragStartY      = 0;
+let dragStartVal    = 0;
+let currentTY       = 0;
 
-// ── Drag state ──
-let dragActive   = false;
-let dragStartY   = 0;      // pointer Y at drag start
-let dragStartVal = 0;      // translateY value at drag start (px, positive = down)
-let currentTY    = 0;      // live translateY in px (positive = further down = more tucked)
+const letterEl  = document.getElementById('env-letter');
+const flapWrap  = document.getElementById('env-flap-wrap');
+const waxSeal   = document.getElementById('env-wax-seal');
+const pocketEnv = document.getElementById('pocket-envelope');
 
-// ── DOM refs ──
-const letterEl   = document.getElementById('env-letter');
-const flapWrap   = document.getElementById('env-flap-wrap');
-const waxSeal    = document.getElementById('env-wax-seal');
-const pocketEnv  = document.getElementById('pocket-envelope');
+// ── Geometry ──
+// All values in px, computed from live DOM each call.
+function getLetterH() { return letterEl.offsetHeight || 300; }
+function getEnvH()    { return document.getElementById('env-back').offsetHeight || 180; }
+// Bottom 14% of letter always stays inside envelope — feels physical
+function getMinTY()   { return -(getLetterH() - getEnvH() * 0.14); }
+// Fully hidden inside envelope
+function getMaxTY()   { return getLetterH() * 0.94; }
+// Just the heading visible above envelope opening
+function getPeekTY()  { return getLetterH() * 0.86; }
 
-// ── Geometry helpers (computed lazily after overlay opens) ──
-function getLetterH() { return letterEl.offsetHeight || 400; }
-function getEnvH()    {
-  const back = document.getElementById('env-back');
-  return back ? back.offsetHeight : 190;
-}
-// Max pull-up: bottom ~28% of letter stays inside envelope
-function getMinTY() { return -(getLetterH() - getEnvH() * 0.28); }
-// Fully tucked
-function getMaxTY() { return getLetterH() * 0.93; }
-// "Peek" position after flap opens (top ~15% of letter shows)
-function getPeekTY() { return getLetterH() * 0.82; }
-
-// ── Apply transform without transition (live drag) ──
-function setTY(val, animated = false) {
+// ── Set position ──
+function setTY(val, animated) {
   currentTY = val;
-  if (animated) {
-    letterEl.classList.add('animated');
-  } else {
-    letterEl.classList.remove('animated');
-  }
+  letterEl.classList.toggle('animated', !!animated);
   letterEl.style.transform = `translateX(-50%) translateY(${val}px)`;
+  if (animated) setTimeout(() => letterEl.classList.remove('animated'), 850);
 }
 
-// ── Snap: after release, decide open or closed ──
+// ── After drag release: snap open or closed ──
 function snapLetter() {
-  const mid = (getMinTY() + getMaxTY()) / 2;
-  if (currentTY < mid) {
-    // Snap open — bottom stays in envelope
+  // Snap open if letter is at least halfway out compared to peek
+  const threshold = (getMinTY() + getPeekTY()) / 2;
+  if (currentTY < threshold) {
     setTY(getMinTY(), true);
     isLetterOpen = true;
-    letterEl.classList.add('draggable', 'scroll-enabled');
     pocketEnv.classList.add('is-open');
     haptic([10, 20]);
   } else {
-    // Snap back in
-    setTY(getMaxTY(), true);
-    isLetterOpen = false;
-    letterEl.classList.remove('scroll-enabled');
-    pocketEnv.classList.remove('is-open');
-    // Re-close flap & seal
-    setTimeout(() => { flapWrap.classList.remove('flap-open'); }, 150);
-    setTimeout(() => { waxSeal.classList.remove('seal-hidden'); }, 700);
-    haptic(20);
+    pushLetterIn();
   }
-  setTimeout(() => letterEl.classList.remove('animated'), 800);
 }
 
-// ── Drag events (pointer API — works for both touch & mouse) ──
+function pushLetterIn() {
+  setTY(getMaxTY(), true);
+  isLetterOpen = false;
+  letterEl.classList.remove('draggable');
+  pocketEnv.classList.remove('is-open');
+  setTimeout(() => flapWrap.classList.remove('flap-open'), 180);
+  setTimeout(() => waxSeal.classList.remove('seal-hidden'), 700);
+  haptic(20);
+}
+
+// ── Drag ──
 function onDragStart(e) {
   if (!letterEl.classList.contains('draggable')) return;
-  // Don't start drag if inner scroll is in motion
-  const inner = document.getElementById('env-letter-inner');
-  if (inner && inner.scrollTop > 4) return;
-
   dragActive   = true;
-  dragStartY   = (e.touches ? e.touches[0].clientY : e.clientY);
+  dragStartY   = e.touches ? e.touches[0].clientY : e.clientY;
   dragStartVal = currentTY;
   letterEl.classList.remove('animated');
   e.stopPropagation();
 }
-
 function onDragMove(e) {
   if (!dragActive) return;
-  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-  const delta   = clientY - dragStartY;
-  const minTY   = getMinTY();
-  const maxTY   = getMaxTY();
-  // Apply rubber-band resistance at limits
-  let newTY = dragStartVal + delta;
-  if (newTY < minTY) newTY = minTY + (newTY - minTY) * 0.18;
-  if (newTY > maxTY) newTY = maxTY + (newTY - maxTY) * 0.18;
-  setTY(newTY);
+  const y   = e.touches ? e.touches[0].clientY : e.clientY;
+  const min = getMinTY(), max = getMaxTY();
+  let v = dragStartVal + (y - dragStartY);
+  if (v < min) v = min + (v - min) * 0.15;
+  if (v > max) v = max + (v - max) * 0.15;
+  setTY(v);
   e.preventDefault();
 }
-
-function onDragEnd(e) {
+function onDragEnd() {
   if (!dragActive) return;
   dragActive = false;
   snapLetter();
 }
 
 letterEl.addEventListener('mousedown',  onDragStart);
-letterEl.addEventListener('touchstart', onDragStart, { passive:false });
+letterEl.addEventListener('touchstart', onDragStart, {passive:false});
 document.addEventListener('mousemove',  onDragMove);
-document.addEventListener('touchmove',  onDragMove, { passive:false });
+document.addEventListener('touchmove',  onDragMove, {passive:false});
 document.addEventListener('mouseup',    onDragEnd);
 document.addEventListener('touchend',   onDragEnd);
 
-// ── Open envelope overlay (from garden button) ──
+// ── Open overlay (from garden) ──
 function openEnvelope() {
   haptic([40,60,40,60,50]);
   $('env-overlay').classList.add('show');
@@ -1590,88 +1548,65 @@ function openEnvelope() {
   resetEnvelopeState();
 }
 
-// ── Close entire overlay ──
 function closeEnvelope() {
   haptic(30);
   $('env-overlay').classList.remove('show');
   document.body.style.overflow = '';
 }
 
-// ── Toggle (tap on envelope area — only works before drag enabled) ──
+// ── Tap on envelope toggles open/close ──
 function toggleLetter() {
   if (letterAnimating) return;
-  if (!isLetterOpen && !letterEl.classList.contains('draggable')) {
+  if (!letterEl.classList.contains('draggable')) {
     triggerOpen();
   } else if (isLetterOpen) {
-    // Tap to push back in
-    setTY(getMaxTY(), true);
-    isLetterOpen = false;
-    letterEl.classList.remove('scroll-enabled', 'draggable');
-    pocketEnv.classList.remove('is-open');
-    setTimeout(() => { flapWrap.classList.remove('flap-open'); }, 200);
-    setTimeout(() => { waxSeal.classList.remove('seal-hidden'); }, 750);
-    setTimeout(() => letterEl.classList.remove('animated'), 800);
-    haptic([25, 20]);
+    pushLetterIn();
   }
 }
 
-// ── Sequence: flap → peek → type (auto-rise) ──
+// ── Opening sequence ──
 function triggerOpen() {
   letterAnimating = true;
-  isLetterOpen    = false;
-
-  // 1. Hide seal
   waxSeal.classList.add('seal-hidden');
-
-  // 2. Open flap
   setTimeout(() => flapWrap.classList.add('flap-open'), 120);
-
-  // 3. Letter peeks out of envelope
   setTimeout(() => {
     pocketEnv.classList.add('is-open');
-    setTY(getPeekTY(), true);
     letterEl.style.pointerEvents = 'auto';
-    setTimeout(() => letterEl.classList.remove('animated'), 800);
+    setTY(getPeekTY(), true);
   }, 380);
-
-  // 4. Enable drag + start typing
   setTimeout(() => {
     letterAnimating = false;
     letterEl.classList.add('draggable');
-    if (!letterTyped) {
-      letterTyped = true;
-      typeEnvLetter();
-    }
-  }, 1050);
+    if (!letterTyped) { letterTyped = true; typeEnvLetter(); }
+  }, 1100);
 }
 
 function resetEnvelopeState() {
-  isLetterOpen    = false;
-  letterAnimating = false;
-  dragActive      = false;
-  letterEl.classList.remove('animated','draggable','scroll-enabled');
+  isLetterOpen = letterAnimating = dragActive = false;
+  letterEl.classList.remove('animated','draggable');
   flapWrap.classList.remove('flap-open');
   waxSeal.classList.remove('seal-hidden');
   pocketEnv.classList.remove('is-open');
-  // snap to tucked without animation
-  const maxTY = getLetterH() * 0.93;
-  currentTY = maxTY;
   letterEl.style.transition = 'none';
-  letterEl.style.transform  = `translateX(-50%) translateY(${maxTY}px)`;
   letterEl.style.pointerEvents = 'none';
+  // position: tucked. Use 9999px as safe large value since height=auto unknown at this point
+  currentTY = 9999;
+  letterEl.style.transform = 'translateX(-50%) translateY(9999px)';
+  // Force reflow then set correct value
+  requestAnimationFrame(() => {
+    const maxTY = getMaxTY();
+    currentTY = maxTY;
+    letterEl.style.transform = `translateX(-50%) translateY(${maxTY}px)`;
+  });
 }
 
-// Backdrop click → close overlay
 $('env-overlay').addEventListener('click', e => {
-  if (e.target === $('env-overlay') || e.target === $('env-backdrop-hit')) {
-    closeEnvelope();
-  }
+  if (e.target === $('env-overlay') || e.target === $('env-backdrop-hit')) closeEnvelope();
 });
 
-// ── Typewriter with auto-rise ──
-// As paragraphs appear, letter nudges upward automatically.
-// The user can also drag at any time — nudge won't override drag.
-// Final auto position = getMinTY() so it's fully readable.
+// ── Typewriter ──
+// Letter rises paragraph-by-paragraph.
+// After ALL text typed → recalculate minTY from actual content height → snap fully open.
 function typeEnvLetter() {
   const bodyEl = $('envLetterBody');
   const signEl = $('envLetterSign');
@@ -1682,53 +1617,53 @@ function typeEnvLetter() {
   const total = paragraphs.length;
   let pIdx = 0;
 
-  // Rise fractions: 0 = fully tucked (getMaxTY), 1 = fully out (getMinTY)
-  // Each paragraph nudges letter a bit further out
-  const riseFractions = [0.12, 0.28, 0.46, 0.64, 0.80, 1.0];
+  // Rise as fraction 0→1 of full travel (peekTY → minTY)
+  const steps = [0.05, 0.18, 0.32, 0.48, 0.63, 0.78, 1.0];
 
-  function nudgeLetter(idx) {
-    // Don't override if user has manually pulled further than auto position
-    const f    = riseFractions[Math.min(idx, riseFractions.length - 1)];
-    const minTY = getMinTY();
-    const maxTY = getMaxTY();
-    const targetTY = maxTY + (minTY - maxTY) * f;
-    // Only nudge if we haven't already exceeded this position
-    if (currentTY > targetTY) {
-      setTY(targetTY, true);
-      setTimeout(() => letterEl.classList.remove('animated'), 900);
-    }
+  function nudge(idx) {
+    const f = steps[Math.min(idx, steps.length - 1)];
+    // Recalculate each time so growing letter height is accounted for
+    const peek = getPeekTY();
+    const min  = getMinTY();
+    const target = peek + (min - peek) * f;
+    if (currentTY > target) setTY(target, true);
   }
 
   function typeNextParagraph() {
     if (pIdx >= total) {
-      // Fully reveal on sign-off
-      nudgeLetter(riseFractions.length - 1);
-      isLetterOpen = true;
-      letterEl.classList.add('scroll-enabled');
-
+      // Sign-off
       const signText = '— someone who cares about you 💙';
       let si = 0;
       const iv = setInterval(() => {
         signEl.textContent += signText[si++];
-        if (si >= signText.length) {
-          clearInterval(iv);
+        if (si < signText.length) return;
+        clearInterval(iv);
+
+        // ── All text rendered ──
+        // Wait one frame for layout to settle, then recalculate and snap fully open
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          const finalMin = getMinTY();
+          isLetterOpen = true;
+          setTY(finalMin, true);
+          haptic([15, 25, 15]);
+
+          // Show hint
           const hint = $('envScrollHint');
           if (hint) {
+            hint.textContent = '↑ tarik ke atas untuk baca ↑';
             hint.style.opacity = '1';
-            setTimeout(() => { hint.style.opacity = '0'; }, 3500);
+            setTimeout(() => { hint.style.opacity = '0'; }, 4000);
           }
-        }
+        }));
       }, 36);
       return;
     }
 
-    nudgeLetter(pIdx);
-
+    nudge(pIdx);
     const p = document.createElement('p');
     bodyEl.appendChild(p);
     const text = paragraphs[pIdx++].replace(/\n/g, ' ');
     let ci = 0;
-
     function typeChar() {
       if (ci >= text.length) { setTimeout(typeNextParagraph, 260); return; }
       p.textContent += text[ci++];
