@@ -348,6 +348,32 @@ body.midnight #vinyl-cabinet {
 #vinyl-notes { display:none; }
 #vinyl-notes.playing { display:block; }
 
+/* ── Web Audio LPF status dot ── */
+#wa-status {
+  display:flex; align-items:center; gap:5px;
+  padding:3px 8px 4px;
+  font-family:'Caveat',cursive; font-size:0.58rem;
+  color:rgba(147,197,253,0.55);
+  letter-spacing:0.06em; text-transform:uppercase;
+  transition:color 0.5s;
+}
+#wa-dot {
+  width:5px; height:5px; border-radius:50%;
+  background:rgba(96,165,250,0.35);
+  transition:background 0.8s, box-shadow 0.8s;
+  flex-shrink:0;
+}
+#wa-status.lpf-active { color:rgba(196,181,253,0.8); }
+#wa-status.lpf-active #wa-dot {
+  background:#a78bfa;
+  box-shadow:0 0 6px rgba(167,139,250,0.7);
+  animation:waDotPulse 1.6s ease-in-out infinite;
+}
+@keyframes waDotPulse {
+  0%,100% { transform:scale(1); opacity:0.8; }
+  50%      { transform:scale(1.5); opacity:1; }
+}
+
 /* ── BIRTHDAY PAGE ── */
 #birthday-page {
   background:linear-gradient(155deg,var(--bg-a) 0%,var(--bg-b) 50%,#fce7f3 100%);
@@ -913,6 +939,12 @@ body.midnight #star-glow-canvas { opacity:1; }
     <input type="range" id="vinyl-volume" min="0" max="1" step="0.01" value="0.45"
            oninput="setVolume(this.value)" aria-label="Volume">
 
+    <!-- Web Audio status indicator -->
+    <div id="wa-status" title="Web Audio Engine">
+      <div id="wa-dot"></div>
+      <span id="wa-label">web audio</span>
+    </div>
+
   </div><!-- /cabinet -->
 </div><!-- /vinyl-player -->
 
@@ -1349,6 +1381,277 @@ setVolume(audio.volume);
 document.addEventListener('click',      startAudio, { once: true });
 document.addEventListener('touchstart', startAudio, { once: true });
 
+// ═══════════════════════════════════════════════════════════════════════
+// 🎵 WEB AUDIO ENGINE  — Adaptive Dimensional Sound Layer
+//
+// Graph Topology (Main Chain):
+//   <audio> → MediaElementSourceNode
+//           → GainNode          (master vol — ducks when letter opens)
+//           → BiquadFilterNode  (Low-Pass — "muffles" music inside env.)
+//           → DynamicsCompressorNode  (prevents clipping on LPF sweeps)
+//           → AudioContext.destination
+//
+// Spatial Synthesis (parallel, independent routing):
+//   OscillatorNode (sine sweep 880→260 Hz)
+//   → GainNode (ADSR: 3 ms attack, 175 ms decay)
+//   → StereoPannerNode  (pan ∝ cursor x / canvas width)
+//   → AudioContext.destination   (bypasses main chain — no muffling)
+//
+// Bloom Chord (on all-100-roses event):
+//   5× OscillatorNode (C₄ E₄ G₄ B₄ D₅, staggered 85 ms)
+//   → GainNode (soft swell 0 → 0.10 → 0 over 2.4 s)
+//   → DynamicsCompressorNode → destination
+//
+// Lifecycle:
+//   · Lazy boot on first user gesture (Autoplay Policy compliance).
+//   · ctx.suspend() on visibilitychange hidden (mirrors _cleanup).
+//   · ctx.resume() on visibilitychange visible (mirrors _resume).
+//   · ctx.close() on pagehide (releases hardware audio resources).
+// ═══════════════════════════════════════════════════════════════════════
+
+const _wa = (() => {
+  'use strict';
+
+  // ── Internal State ────────────────────────────────────────────
+  let ctx        = null;   // AudioContext
+  let src        = null;   // MediaElementSourceNode  (wraps `audio`)
+  let masterGain = null;   // GainNode  – global vol multiplier
+  let lpf        = null;   // BiquadFilterNode — envelope muffler
+  let comp       = null;   // DynamicsCompressorNode
+  let _booted    = false;
+
+  // ── Tuning Constants ─────────────────────────────────────────
+  const LP_CLEAR   = 22050; // Hz — fully transparent (Nyquist)
+  const LP_MUFFLED =   460; // Hz — letter open  (warm, intimate)
+  const LP_Q       = 0.707; // Butterworth: maximally flat passband
+  const RAMP_OPEN  =   1.3; // s — open  sweep duration
+  const RAMP_CLOSE =   0.9; // s — close sweep duration
+  const GAIN_MUFFLE= 0.60;  // master gain when letter is open
+  const GAIN_NORMAL= 1.00;  // master gain default
+
+  // ── Boot ─────────────────────────────────────────────────────
+  // Called once — builds the audio graph, connects MediaElementSource.
+  // MUST happen inside a user-gesture handler (click / touchstart).
+  function boot() {
+    if (_booted) return;
+    _booted = true;
+
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      console.warn('[WA] AudioContext unavailable — engine disabled.', e);
+      _booted = false;
+      return;
+    }
+
+    // ── Build Main Chain ──────────────────────────────────────
+    try {
+      src = ctx.createMediaElementSource(audio); // `audio` = outer scope
+    } catch (e) {
+      // MediaElementSource already claimed (double-boot guard)
+      console.warn('[WA] MediaElementSource already connected.', e);
+      ctx.close();
+      ctx = null; _booted = false;
+      return;
+    }
+
+    masterGain = ctx.createGain();
+    masterGain.gain.value = GAIN_NORMAL;
+
+    lpf = ctx.createBiquadFilter();
+    lpf.type            = 'lowpass';
+    lpf.frequency.value = LP_CLEAR;
+    lpf.Q.value         = LP_Q;
+
+    comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -20;
+    comp.knee.value      =  10;
+    comp.ratio.value     =   3;
+    comp.attack.value    = 0.003;
+    comp.release.value   = 0.250;
+
+    // src → masterGain → lpf → comp → speakers
+    src.connect(masterGain);
+    masterGain.connect(lpf);
+    lpf.connect(comp);
+    comp.connect(ctx.destination);
+
+    console.log('[WA] Graph ready: MediaElement → Gain → LPF(Butterworth) → DynComp → Out ✓');
+  }
+
+  // ── ensureRunning ─────────────────────────────────────────────
+  // Boots if needed, resumes if suspended (browser may suspend on blur).
+  function ensureRunning() {
+    if (!_booted) boot();
+    if (ctx && ctx.state === 'suspended') ctx.resume();
+  }
+
+  // ── Envelope Effect — envOpen / envClose ─────────────────────
+  // envOpen:  LPF sweeps 22050 Hz → 460 Hz  (exponential, 1.3 s)
+  //           masterGain ramps 1.00 → 0.60   (linear, 1.1 s)
+  //           Together: music becomes muffled & quieter as if fading
+  //           into the background while attention shifts to the letter.
+  //
+  // envClose: Both ramp back to their open-air defaults (0.9 s).
+  function _setWaIndicator(active) {
+    const el = document.getElementById('wa-status');
+    const lb = document.getElementById('wa-label');
+    if (!el) return;
+    el.classList.toggle('lpf-active', active);
+    if (lb) lb.textContent = active ? 'focus mode' : 'web audio';
+  }
+
+  function envOpen() {
+    ensureRunning();
+    if (!ctx) return;
+    const t = ctx.currentTime;
+
+    // Cancel any in-flight ramp, re-anchor from current value (no jump)
+    lpf.frequency.cancelScheduledValues(t);
+    lpf.frequency.setValueAtTime(lpf.frequency.value, t);
+    lpf.frequency.exponentialRampToValueAtTime(LP_MUFFLED, t + RAMP_OPEN);
+
+    masterGain.gain.cancelScheduledValues(t);
+    masterGain.gain.setValueAtTime(masterGain.gain.value, t);
+    masterGain.gain.linearRampToValueAtTime(GAIN_MUFFLE, t + RAMP_OPEN * 0.8);
+
+    _setWaIndicator(true);
+  }
+
+  function envClose() {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+
+    lpf.frequency.cancelScheduledValues(t);
+    lpf.frequency.setValueAtTime(lpf.frequency.value, t);
+    lpf.frequency.exponentialRampToValueAtTime(LP_CLEAR, t + RAMP_CLOSE);
+
+    masterGain.gain.cancelScheduledValues(t);
+    masterGain.gain.setValueAtTime(masterGain.gain.value, t);
+    masterGain.gain.linearRampToValueAtTime(GAIN_NORMAL, t + RAMP_CLOSE * 0.85);
+
+    _setWaIndicator(false);
+  }
+
+  // ── Spatial Water-Drop Synthesis ─────────────────────────────
+  // Generates a short procedural "drip" tone per splash event.
+  //
+  // Waveform : sine oscillator (most resembles liquid resonance)
+  // Pitch    : exponential sweep  f₀ (800–1000 Hz) → f₁ (220–300 Hz)
+  //            in 130 ms — mimics a falling droplet decelerating.
+  // Envelope : fast attack (3 ms) + exponential decay (175 ms)
+  //            → total grain length ≈ 200 ms (inaudible tail)
+  // Panning  : StereoPannerNode, value = (normX − 0.5) × 1.4
+  //            normX=0.0 → pan = −0.70 (left speaker)
+  //            normX=1.0 → pan = +0.70 (right speaker)
+  // Routing  : bypasses main LPF chain → always clear, unaffected by
+  //            envelope muffling (water sounds stay crisp).
+  // Throttle : max 8 distinct tones / second via performance.now() gate.
+
+  let _dropThrottleTs = 0;
+
+  function splashAt(normX) {
+    // Guard: ctx must be running (not just booted)
+    if (!ctx || ctx.state !== 'running') return;
+
+    const now = performance.now();
+    if (now - _dropThrottleTs < 125) return; // 8 Hz max
+    _dropThrottleTs = now;
+
+    const t   = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const env = ctx.createGain();
+
+    // Slight pitch randomization ±12% → organic, non-repetitive
+    const f0 = 800 + Math.random() * 200;
+    const f1 = 220 + Math.random() * 80;
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(f0, t);
+    osc.frequency.exponentialRampToValueAtTime(f1, t + 0.13);
+
+    // ADSR
+    env.gain.setValueAtTime(0,     t);
+    env.gain.linearRampToValueAtTime(0.18, t + 0.003); // 3 ms attack
+    env.gain.exponentialRampToValueAtTime(0.001, t + 0.18); // 175 ms decay
+
+    // StereoPanner (undefined in very old WebKit — safe fallback)
+    const panner = (ctx.createStereoPanner) ? ctx.createStereoPanner() : null;
+    if (panner) {
+      panner.pan.value = Math.max(-0.92, Math.min(0.92, (normX - 0.5) * 1.4));
+      osc.connect(env);
+      env.connect(panner);
+      panner.connect(ctx.destination); // bypass main LPF
+    } else {
+      osc.connect(env);
+      env.connect(ctx.destination);
+    }
+
+    osc.start(t);
+    osc.stop(t + 0.22);
+
+    // Deterministic cleanup — no dangling nodes after grain ends
+    osc.onended = () => {
+      try {
+        osc.disconnect();
+        env.disconnect();
+        if (panner) panner.disconnect();
+      } catch (_) { /* node already GC'd — safe to ignore */ }
+    };
+  }
+
+  // ── Full-Bloom Chord ─────────────────────────────────────────
+  // Triggered once when all 100 roses bloom.
+  // Pentatonic major voicing: C₄ E₄ G₄ B₄ D₅
+  // Notes enter in arpeggio (85 ms stagger), sustain 1.0 s, then fade.
+  // Routed through DynamicsCompressor for harmonic warmth.
+  function bloomChord() {
+    ensureRunning();
+    if (!ctx) return;
+
+    const NOTES = [261.63, 329.63, 392.00, 493.88, 587.33];
+    const t     = ctx.currentTime;
+
+    NOTES.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      const d   = i * 0.085; // stagger: 0, 85, 170, 255, 340 ms
+
+      osc.type            = 'sine';
+      osc.frequency.value = freq;
+
+      // Swell envelope: 0 → 0.09 → hold 1.0s → 0 (total 2.5s)
+      env.gain.setValueAtTime(0,    t + d);
+      env.gain.linearRampToValueAtTime(0.09, t + d + 0.20);
+      env.gain.setValueAtTime(0.09, t + d + 1.20);
+      env.gain.exponentialRampToValueAtTime(0.001, t + d + 2.50);
+
+      osc.connect(env);
+      env.connect(comp);   // warm compression
+      osc.start(t + d);
+      osc.stop(t + d + 2.6);
+      osc.onended = () => { try { osc.disconnect(); env.disconnect(); } catch (_) {} };
+    });
+  }
+
+  // ── Visibility / Lifecycle Integration ───────────────────────
+  document.addEventListener('visibilitychange', () => {
+    if (!ctx) return;
+    document.visibilityState === 'hidden' ? ctx.suspend() : ctx.resume();
+  });
+
+  window.addEventListener('pagehide', () => {
+    if (ctx) ctx.close().catch(() => {});
+  });
+
+  // ── Public API ────────────────────────────────────────────────
+  return { ensureRunning, envOpen, envClose, splashAt, bloomChord };
+})();
+
+// Boot Web Audio graph on the same first-gesture events that start playback
+document.addEventListener('click',      () => _wa.ensureRunning(), { once: true });
+document.addEventListener('touchstart', () => _wa.ensureRunning(), { once: true });
+
 // ═══════════════════════════════════════
 // 🌙 EASTER EGG — Moon click 3x
 // ═══════════════════════════════════════
@@ -1499,7 +1802,7 @@ function startTypewriter(){
 // Letter height = auto (grows with content).
 // Drag limits recalculated AFTER typing finishes.
 // ═══════════════════════════════════════
-const letterContent = `velly,\nhave watered 100 roses.\nthats no coincidence — thats u.\nu are the one who is attentive, patient, and never gives up.\n\ntoday, 9 april, i want to say something that i might have never said directly:\n\nthanks for existing. truly.\nnot cz u're perfect (but ik u = perfect) — but precisely because u are u. with all ur exhaustion, all ur cries, and all ur "i can't do this anymore" moments.\n\nu strong without realizing it, sayang. and that's one of the most beautiful things i've ever seen.\n\ni love how u care so deeply about the people around u, even when ur own cup is empty. that says a lot about who u are.\n\nhappy birthday. i hope this year is much lighter, much happier, and full of things that make u smile for no reason yaa.\n\nu deserve it all. every single bit of it.\n\ni know its not gonna be easy. its going to be really hard, and were gonna have to work at this every day. but i want to do that because i want u—all of u, forever, every day. just u and me. because at the end of the day, it was always u. even when it wasnt, it was.💙`;
+const letterContent = `my love,\n u just watered 100 roses.\nevery single one \nfor u, there is no easy way out. \nthere never was, thats not stubbornness- \nthats just who u are \attentive, parient, n someone who never gives up. \n\ntoday, 9 april, i want to say something that i might have never said directly:\n\nthanks for existing. truly.\nnot cz u're perfect (but ik u = perfect) — but precisely because u are u. with all ur exhaustion, all ur cries, and all ur "i can't do this anymore" moments.\n\nu strong without realizing it, sayang. and that's one of the most beautiful things i've ever seen.\n\ni love how u care so deeply about the people around u, even when ur own cup is empty. that says a lot about who u are.\n\nhappy birthday. i hope this year is much lighter, much happier, and full of things that make u smile for no reason yaa.\n\nu deserve it all. every single bit of it.\n\ni know its not gonna be easy. its going to be really hard, and were gonna have to work at this every day. but i want to do that because i want u—all of u, forever, every day. just u and me. because at the end of the day, it was always u. even when it wasnt, it was.💙`;
 
 let isLetterOpen    = false;
 let letterAnimating = false;
@@ -1663,12 +1966,17 @@ function openEnvelope() {
   $('env-overlay').classList.add('show');
   document.body.style.overflow = 'hidden';
   resetEnvelopeState();
+  // ── WA: sweep LPF + duck gain — music fades to background
+  //    as focus shifts to the letter. 300 ms delay so the sonic
+  //    shift aligns with the flap-flip animation visually.
+  setTimeout(() => _wa.envOpen(), 300);
 }
 
 // ── Close entire overlay ──
 // Called after tuck-in animation completes (Spec §5)
 function closeEnvelope() {
   haptic(30);
+  _wa.envClose(); // ── WA: restore LPF + gain immediately on close gesture
   // If letter is open, animate tuck-in first, THEN hide overlay
   if (isLetterOpen || letterEl.classList.contains('draggable')) {
     animateClose();
@@ -2085,6 +2393,11 @@ function addSplash(x,y){
     const a=Math.random()*Math.PI*2,sp=.7+Math.random()*1.5;
     splashes.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-1.2,alpha:.7,r:1+Math.random()*1.5,alive:true});
   }
+  // ── WA: synthesize a spatial drip tone panned to the splash position.
+  //    Normalize x against canvas pixel width (gCv.width, fallback 600).
+  //    The drop sound bypasses the main LPF chain so it always sounds
+  //    crisp, even when the letter is open and music is muffled.
+  _wa.splashAt(x / (gCv.width || 600));
 }
 
 function drawRose(ctx,x,y,g,maxH,rObj){
@@ -2213,6 +2526,10 @@ function onAllBloomed(){
   const rect=gCv.getBoundingClientRect();
   for(let i=0;i<8;i++) setTimeout(()=>spawnGlowRing(rect.left+Math.random()*rect.width,rect.top+Math.random()*rect.height),i*400);
   for(let i=0;i<10;i++) setTimeout(()=>{const el=$('ind-'+i);if(el){el.style.transform='scale(1.5) rotate(10deg)';setTimeout(()=>el.style.transform='scale(1.18)',350);}},i*100);
+  // ── WA: pentatonic bloom chord — C₄ E₄ G₄ B₄ D₅ arpeggiated
+  //    over the final rose's sparkle animation (~500 ms offset so
+  //    the visual climax and sonic climax arrive together).
+  setTimeout(() => _wa.bloomChord(), 500);
 }
 
 window.addEventListener('resize',()=>{
