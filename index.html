@@ -891,7 +891,7 @@ body.midnight #star-glow-canvas { opacity:1; }
 
         <!-- Album art label in center -->
         <div id="vinyl-label">
-          <img src="img/elvis.jpg" alt="Elvis Presley" draggable="false"
+          <img src="img/george.jpg" alt="George Benson" draggable="false"
                onerror="this.style.display='none';this.parentElement.style.background='linear-gradient(135deg,#1d4ed8,#3b82f6)'">
         </div>
 
@@ -930,8 +930,8 @@ body.midnight #star-glow-canvas { opacity:1; }
     <div id="vinyl-controls">
       <button id="vinyl-play-btn" onclick="toggleAudio()" aria-label="Play / Pause">▶</button>
       <div class="vinyl-track-info">
-        <span class="vinyl-song-title">Cant Help Falling in Love</span>
-        <span class="vinyl-song-artist">Elvis Presley</span>
+        <span class="vinyl-song-title">Nothings Gonna Change My Love for U</span>
+        <span class="vinyl-song-artist">George Benson</span>
       </div>
     </div>
 
@@ -1300,7 +1300,7 @@ if(!isMobile){
 // Syncs disc rotation, tonearm, & notes
 // with the Web Audio API playback state.
 // ═══════════════════════════════════════
-const audio = new Audio('audio/elvis.mp3');
+const audio = new Audio('audio/george.mp3');
 audio.loop = true;
 audio.volume = 0.45;
 
